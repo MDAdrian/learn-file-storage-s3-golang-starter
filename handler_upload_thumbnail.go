@@ -38,12 +38,18 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	r.ParseMultipartForm(maxMemory)
 
 	// "thumbnail" should match the HTML form input name
-	file, _, err := r.FormFile("thumbnail")
+	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
 		return
 	}
 	defer file.Close()
+
+	mediaType := header.Header.Get("Content-Type")
+	if mediaType == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
+		return
+	}
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
@@ -62,7 +68,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	videoThumbnails[videoID] = thumbnail{
-		mediaType: ".png",
+		mediaType: mediaType,
 		data: fileData,
 	}
 
@@ -75,15 +81,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
+		delete(videoThumbnails, videoID)
 		respondWithError(w, http.StatusInternalServerError, "Error while updating video", err)
 		return
 	}
 
-	videoAsJson, err := json.Marshal(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error while marshaling video", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, videoAsJson)
+	respondWithJSON(w, http.StatusOK, video)
 }
