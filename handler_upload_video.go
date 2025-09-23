@@ -89,6 +89,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Get aspect ration
+	aspectRatio, err := getVideoAspectRatio(dst.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not extract aspect ratio", err)
+		return
+	}
+
+	var orientation string
+	switch aspectRatio{
+	case "16:9":
+		orientation = "landscape"
+	case "9:16":
+		orientation = "portrait"
+	default:
+		orientation = "other"
+	}
+
 	// Reset pointer to the beginning so we can read from the start
 	if _, err := dst.Seek(0, io.SeekStart); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "could not reset file pointer", err)
@@ -102,14 +119,14 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	randomHex := hex.EncodeToString(b)
-	videoKey := randomHex + ".mp4"
+	videoKey := orientation + "/" + randomHex + ".mp4"
 
 	// upload to S3
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(cfg.s3Bucket),
 		Key:    aws.String(videoKey),
 		Body:   dst,
-		ContentType: &mediaType,
+		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "upload to S3 failed", err)
