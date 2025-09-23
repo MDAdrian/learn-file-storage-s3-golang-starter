@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 )
 
@@ -74,4 +75,42 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "other", nil
 	}
 	
+}
+
+// processVideoForFastStart takes a path to a local (temp) file and produces a new MP4
+// with the "faststart" flag (moov atom moved to the front). It returns the new file path.
+func processVideoForFastStart(filePath string) (string, error) {
+	if filePath == "" {
+		return "", fmt.Errorf("empty input file path")
+	}
+	// Create output path (simple convention: append ".processing")
+	outPath := filePath + ".processing"
+
+	// ffmpeg -i <in> -c copy -movflags faststart -f mp4 <out>
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		outPath,
+	)
+
+	// If you want logs, you can wire these up:
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg faststart failed: %w", err)
+	}
+	// Basic sanity check that output exists and is non-zero
+	info, err := os.Stat(outPath)
+	if err != nil {
+		return "", fmt.Errorf("processed file missing: %w", err)
+	}
+	if info.Size() == 0 {
+		return "", fmt.Errorf("processed file is empty")
+	}
+
+	return outPath, nil
 }
