@@ -2,11 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
 func getVideoAspectRatio(filePath string) (string, error) {
@@ -113,4 +120,70 @@ func processVideoForFastStart(filePath string) (string, error) {
 	}
 
 	return outPath, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+
+	if *video.VideoURL == "" {
+		return video, fmt.Errorf("video has empty VideoURL")
+	}
+
+	parts := strings.SplitN(*video.VideoURL, ",", 2)
+	if len(parts) != 2 {
+		return video, fmt.Errorf("invalid VideoURL format (want 'bucket,key'), got: %q", video.VideoURL)
+	}
+	bucket := strings.TrimSpace(parts[0])
+	key := strings.TrimSpace(parts[1])
+	if bucket == "" || key == "" {
+		return video, fmt.Errorf("invalid bucket/key parsed from VideoURL: bucket=%q key=%q", bucket, key)
+	}
+
+	// Use a sensible default expiry; adjust if you keep this in config.
+	const defaultExpiry = 15 * time.Minute
+
+	signedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, defaultExpiry)
+	if err != nil {
+		return video, fmt.Errorf("presigning S3 URL: %w", err)
+	}
+
+	video.VideoURL = &signedURL
+	return video, nil
+}
+
+
+// generatePresignedURL builds a GET pre-signed URL for an S3 object.
+// Expiration is clamped to S3's maximum of 7 days.
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	if s3Client == nil {
+		return "", fmt.Errorf("s3Client is nil")
+	}
+	if bucket == "" || key == "" {
+		return "", fmt.Errorf("bucket and key are required")
+	}
+	if expireTime <= 0 {
+		expireTime = 15 * time.Minute
+	}
+	const maxTTL = 7 * 24 * time.Hour
+	if expireTime > maxTTL {
+		expireTime = maxTTL
+	}
+
+	presigner := s3.NewPresignClient(s3Client)
+
+	out, err := presigner.PresignGetObject(
+		context.Background(),
+		&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		},
+		s3.WithPresignExpires(expireTime),
+	)
+	if err != nil {
+		return "", fmt.Errorf("presign get object: %w", err)
+	}
+
+	return out.URL, nil
 }
